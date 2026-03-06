@@ -1,7 +1,8 @@
 __pycache__/
 src/*.egg-info/
 MANIFEST
-venv/
 .coverage
-.cursor/rules/
+.venv/
+.cursor/
+.vscode/
 .pytest_cache/
