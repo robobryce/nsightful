@@ -23,6 +23,7 @@ repos:
         name: mypy
         entry: mypy
         language: system
-        args: [--ignore-missing-imports, --no-incremental]
+        args: [--ignore-missing-imports, --no-incremental, src]
+        pass_filenames: false
         files: ^src/.*\.py$
         types: [python]
