@@ -36,11 +36,16 @@ dependencies = []
 [project.optional-dependencies]
 notebook = [
     "ipywidgets>=7.0.0",
-    "IPython>=7.0.0"
+    "IPython>=7.10.0",
+    "ipykernel>=6.0.0",
+    "jupyter-client>=7.0.0",
+    "nvtx>=0.2.5,!=0.2.12"
 ]
 dev = [
     "pytest>=6.0",
     "pytest-cov",
+    "nbclient",
+    "nbformat",
     "black",
     "flake8",
     "mypy",
@@ -55,6 +60,8 @@ Documentation = "https://github.com/brycelelbach/nsightful#readme"
 
 [project.scripts]
 nsightful = "nsightful.cli:main"
+nsightful-ncu = "nsightful.ipython:main_ncu"
+nsightful-nsys = "nsightful.ipython:main_nsys"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -78,3 +85,6 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "gpu: opt-in tests that run the real NVIDIA profilers (set NSIGHTFUL_RUN_GPU_TESTS=1)"
+]

@@ -849,9 +849,9 @@ class TestNbclientExecution:
         # --- Cell 0: is_interactive_notebook ---
         cell0_outputs = nb.cells[0].outputs
         cell0_text = _collect_cell_text(cell0_outputs)
-        assert "False" in cell0_text, (
-            f"Expected 'False' in is_interactive_notebook cell output, got: {cell0_text}"
-        )
+        assert (
+            "False" in cell0_text
+        ), f"Expected 'False' in is_interactive_notebook cell output, got: {cell0_text}"
 
         # --- Cell 1: display_ncu_csv_in_notebook ---
         # In non-interactive mode, falls back to display_ncu_simple_markdown
@@ -861,9 +861,9 @@ class TestNbclientExecution:
         assert "display_ncu_csv_in_notebook completed successfully" in cell1_text
         # There should be display_data outputs (Markdown rendered content)
         display_data_outputs = [o for o in cell1_outputs if o.output_type == "display_data"]
-        assert len(display_data_outputs) > 0, (
-            "Expected display_data outputs from display_ncu_csv_in_notebook"
-        )
+        assert (
+            len(display_data_outputs) > 0
+        ), "Expected display_data outputs from display_ncu_csv_in_notebook"
 
         # --- Cell 2: display_nsys_sqlite_file_in_notebook ---
         # Produces an HTML display with Perfetto integration.
@@ -872,17 +872,17 @@ class TestNbclientExecution:
         assert "display_nsys_sqlite_file_in_notebook completed successfully" in cell2_text
         # Should contain display_data output with HTML content
         display_data_outputs = [o for o in cell2_outputs if o.output_type == "display_data"]
-        assert len(display_data_outputs) > 0, (
-            "Expected display_data outputs from display_nsys_sqlite_file_in_notebook"
-        )
+        assert (
+            len(display_data_outputs) > 0
+        ), "Expected display_data outputs from display_nsys_sqlite_file_in_notebook"
         # Verify the HTML contains the Perfetto button
         html_contents = []
         for o in display_data_outputs:
             html_contents.append(o.get("data", {}).get("text/html", ""))
         all_html = "\n".join(html_contents)
-        assert "perfetto" in all_html.lower(), (
-            f"Expected Perfetto-related HTML in nsys output, got: {all_html[:200]}"
-        )
+        assert (
+            "perfetto" in all_html.lower()
+        ), f"Expected Perfetto-related HTML in nsys output, got: {all_html[:200]}"
 
 
 def _collect_cell_text(outputs):
