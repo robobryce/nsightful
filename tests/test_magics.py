@@ -442,6 +442,7 @@ class TestNSYSMagic:
     @pytest.fixture(autouse=True)
     def _collection_ready(self, monkeypatch):
         monkeypatch.setattr(magics, "_wait_for_nsys_collection", Mock())
+        monkeypatch.setattr(magics, "_nsys_supports_ready_callback", Mock(return_value=True))
 
     @pytest.mark.parametrize("profiler", (None, "ncu"))
     def test_requires_nsys_wrapper(self, monkeypatch, profiler):
@@ -517,6 +518,27 @@ class TestNSYSMagic:
         assert run_profiler.call_args_list[1] == call(["/opt/nsys", "stop", "--session=session-42"])
         display.assert_called_once_with(str(sqlite_report))
         assert f"[nsys] Report: {report}" in capsys.readouterr().out
+
+    def test_profiles_without_callback_when_nsys_does_not_support_it(self, monkeypatch, tmp_path):
+        monkeypatch.setenv(PROFILER_ENV, "nsys")
+        monkeypatch.setenv(NSYS_COMMAND_ENV, "/opt/nsys")
+        monkeypatch.setenv(NSYS_SESSION_ENV, "session-42")
+        monkeypatch.setattr(magics, "_nsys_supports_ready_callback", Mock(return_value=False))
+        run_profiler = Mock(return_value=_result())
+        wait_for_collection = Mock()
+        monkeypatch.setattr(magics, "_run_profiler_command", run_profiler)
+        monkeypatch.setattr(magics, "_wait_for_nsys_collection", wait_for_collection)
+        monkeypatch.setattr(magics, "_synchronize_current_cuda_context", Mock())
+
+        magics.NSYSMagics(shell=_shell(SimpleNamespace(success=True))).nsys(
+            f"-o {tmp_path / 'timeline'} --no-display", "launch_kernel()"
+        )
+
+        start_command = run_profiler.call_args_list[0].args[0]
+        assert not any(
+            argument.startswith("--after-collection-start=") for argument in start_command
+        )
+        wait_for_collection.assert_not_called()
 
     def test_no_display_does_not_require_sqlite_export(self, monkeypatch, tmp_path):
         report = tmp_path / "timeline.nsys-rep"
