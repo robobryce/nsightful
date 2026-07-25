@@ -211,6 +211,29 @@ class TestProfilerHelpers:
         with pytest.raises(UsageError, match="did not start"):
             magics._wait_for_nsys_collection(tmp_path / "missing")
 
+    def test_nsys_collection_is_active(self, monkeypatch):
+        run_profiler = Mock(
+            return_value=_result(stdout='[{"name":"session-1","state":"Collection"}]')
+        )
+        monkeypatch.setattr(magics, "_run_profiler_command", run_profiler)
+
+        assert magics._nsys_collection_is_active("nsys", "session-1")
+        run_profiler.assert_called_once_with(["nsys", "sessions", "list", "--output-format=json"])
+
+    def test_wait_for_nsys_session_collection_polls_until_active(self, monkeypatch):
+        active = Mock(side_effect=(False, True))
+        sleep = Mock()
+        monkeypatch.setattr(magics, "_nsys_collection_is_active", active)
+        monkeypatch.setattr(magics.time, "sleep", sleep)
+
+        magics._wait_for_nsys_session_collection("nsys", "session-1")
+
+        assert active.call_args_list == [
+            call("nsys", "session-1"),
+            call("nsys", "session-1"),
+        ]
+        sleep.assert_called_once_with(0.01)
+
     def test_synchronize_current_cuda_context(self, monkeypatch):
         def get_current(context_pointer):
             context_pointer._obj.value = 1234
@@ -527,7 +550,7 @@ class TestNSYSMagic:
         run_profiler = Mock(return_value=_result())
         wait_for_collection = Mock()
         monkeypatch.setattr(magics, "_run_profiler_command", run_profiler)
-        monkeypatch.setattr(magics, "_wait_for_nsys_collection", wait_for_collection)
+        monkeypatch.setattr(magics, "_wait_for_nsys_session_collection", wait_for_collection)
         monkeypatch.setattr(magics, "_synchronize_current_cuda_context", Mock())
 
         magics.NSYSMagics(shell=_shell(SimpleNamespace(success=True))).nsys(
@@ -538,7 +561,7 @@ class TestNSYSMagic:
         assert not any(
             argument.startswith("--after-collection-start=") for argument in start_command
         )
-        wait_for_collection.assert_not_called()
+        wait_for_collection.assert_called_once_with("/opt/nsys", "session-42")
 
     def test_no_display_does_not_require_sqlite_export(self, monkeypatch, tmp_path):
         report = tmp_path / "timeline.nsys-rep"

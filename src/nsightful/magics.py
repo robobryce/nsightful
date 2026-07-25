@@ -2,6 +2,7 @@
 
 import atexit
 import ctypes
+import json
 import os
 import shlex
 import shutil
@@ -220,6 +221,29 @@ def _nsys_supports_ready_callback(nsys: str) -> bool:
     return result.returncode == 0 and "--after-collection-start" in output
 
 
+def _nsys_collection_is_active(nsys: str, session: str) -> bool:
+    """Return whether Nsight Systems reports an active interactive collection."""
+    result = _run_profiler_command([nsys, "sessions", "list", "--output-format=json"])
+    if result.returncode != 0:
+        _check_profiler_command(result, [nsys, "sessions", "list"])
+    try:
+        sessions = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise UsageError("nsys sessions list returned invalid JSON") from error
+    return any(
+        entry.get("name") == session and entry.get("state") == "Collection" for entry in sessions
+    )
+
+
+def _wait_for_nsys_session_collection(nsys: str, session: str) -> None:
+    """Wait until Nsight Systems reports that the session is collecting."""
+    deadline = time.monotonic() + _NSYS_START_TIMEOUT_SECONDS
+    while not _nsys_collection_is_active(nsys, session):
+        if time.monotonic() >= deadline:
+            raise UsageError("nsys collection did not start before the timeout")
+        time.sleep(0.01)
+
+
 def _wait_for_nsys_collection(marker: Path) -> None:
     """Wait until Nsight Systems confirms that collection has started."""
     deadline = time.monotonic() + _NSYS_START_TIMEOUT_SECONDS
@@ -383,6 +407,8 @@ class NSYSMagics(Magics):
             try:
                 if ready_marker is not None:
                     _wait_for_nsys_collection(ready_marker)
+                else:
+                    _wait_for_nsys_session_collection(nsys, session)
                 result = self.shell.run_cell(cell)
                 if not _cell_succeeded(result):
                     nested_error = getattr(result, "error_before_exec", None) or getattr(
