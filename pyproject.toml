@@ -48,7 +48,7 @@ dev = [
     "nbformat",
     "black",
     "flake8",
-    "mypy<2.3",
+    "mypy<2",
     "pre-commit"
 ]
 
