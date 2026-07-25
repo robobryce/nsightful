@@ -13,6 +13,7 @@ In a nutshell, `nsightful` contains:
 - Nsight Systems SQLite -> [Google Chrome Trace Event Format](https://perfetto.dev/docs/getting-started/other-formats#chrome-json-format) JSON.
 - Command line tools for converting Nsight Compute and Nsight Systems reports to those formats.
 - Jupyter notebook widget for displaying Nsight Compute and Nsight Systems reports.
+- IPython wrappers and `%%ncu` / `%%nsys` cell magics for profiling notebook cells in place.
 
 ## Installation
 
@@ -22,13 +23,71 @@ If you just need the command line tool:
 pip install git+https://github.com/brycelelbach/nsightful.git
 ```
 
-If you want to use the Jupyter notebook widgets:
+If you want to use the Jupyter notebook widgets or cell profilers:
 
 ```bash
 pip install "nsightful[notebook] @ git+https://github.com/brycelelbach/nsightful.git"
 ```
 
 ## Quick Start
+
+### Profiling Notebook Cells
+
+Nsightful can install Jupyter kernels that start IPython under Nsight Compute or Nsight Systems.
+The matching cell magic is ready as soon as you select the kernel; there is no enable command and
+no kernel restart.
+
+```bash
+# Install both kernels for the current user.
+nsightful-ncu install --user
+nsightful-nsys install --user
+```
+
+Select either **Python 3 (Nsight Compute)** or **Python 3 (Nsight Systems)** in Jupyter. A notebook
+uses one profiler at a time: the Nsight Compute kernel provides `%%ncu`, while the Nsight Systems
+kernel provides `%%nsys`. Variables and imports from earlier cells remain available in the
+profiled cell.
+
+```python
+import cupy as cp
+
+x = cp.arange(1_000_000)
+```
+
+With the Nsight Compute kernel:
+
+```python
+%%ncu -o multiply.ncu-rep
+x *= 2
+```
+
+With the Nsight Systems kernel:
+
+```python
+%%nsys -o multiply.nsys-rep
+x *= 2
+```
+
+Both magics save the native report and display it in the notebook. `%%nsys` also exports the
+corresponding SQLite file. Pass `--no-display` to save without rendering. Arguments after `--` on
+`%%ncu` are passed to the report import command; other arguments on `%%nsys` are passed to
+`nsys start`.
+
+Profiler collection options must be chosen when the wrapper starts. They can be stored in a
+custom kernelspec at installation time:
+
+```bash
+nsightful-ncu install --user '--profiler-args=--set full --clock-control none'
+nsightful-nsys install --user '--profiler-args=--trace=cuda,nvtx,osrt'
+```
+
+The wrappers can also launch a terminal IPython directly. Arguments before `--` go to the
+profiler, and arguments after it go to IPython:
+
+```bash
+nsightful-ncu --set full --
+nsightful-nsys --trace=cuda,nvtx,osrt --
+```
 
 ### Nsight Compute (NCU)
 
@@ -94,47 +153,8 @@ with open('myreport.csv', 'r') as f:
     nsightful.display_ncu_csv_in_notebook(f)
 ```
 
-If you want to profile cells with Nsightful without the Nsight JupyterLab extension, you can use
-`%%writefile` to output a Python file that will be run under `ncu`. Note that with this approach,
-the cell must be self contained; it cannot depend on any other cells.
-
-```bash
-!pip install "nsightful[notebook] @ git+https://github.com/brycelelbach/nsightful.git"
-```
-
-```python
-%%writefile copy_blocked.py
-
-from numba import cuda
-import cupy as cp
-
-total_items = 2**28
-items_per_thread = 2**6
-threads_per_block = 256
-blocks = int(total_items / (threads_per_block * items_per_thread))
-
-src = cp.arange(total_items)
-dst = cp.empty_like(src)
-
-@cuda.jit
-def copy_blocked(src, dst, items_per_thread):
- base = cuda.grid(1) * items_per_thread
- for i in range(items_per_thread):
-   dst[base + i] = src[base + i]
-
-copy_blocked[blocks, threads_per_block](src, dst, items_per_thread)
-```
-
-```bash
-!ncu -f --kernel-name regex:copy_blocked --set full -o copy_blocked python copy_blocked.py
-```
-
-```python
-import nsightful
-
-copy_blocked_csv = !ncu --import copy_blocked.ncu-rep --csv
-nsightful.display_ncu_csv_in_notebook(copy_blocked_csv)
-```
+To collect a report from code already loaded in the notebook, use the Nsight Compute kernel and
+`%%ncu` as shown above. This avoids writing a self-contained script or restarting the kernel.
 
 ### Nsight Systems (NSYS)
 
@@ -191,44 +211,9 @@ with open('myreport.sqlite', 'rb') as f:
     nsightful.display_nsys_sqlite_in_notebook(f)
 ```
 
-If you want to profile cells with Nsightful without the Nsight JupyterLab extension, you can use `%%writefile` to output a Python file that will be run under `nsys`. Note that with this approach, the cell must be self contained; it cannot depend on any other cells.
-
-```bash
-!pip install "nsightful[notebook] @ git+https://github.com/brycelelbach/nsightful.git"
-```
-
-```python
-%%writefile power_iteration.py
-
-import cupy as cp
-
-# Power iteration to find dominant eigenvector
-size = 4096
-iterations = 100
-
-# Create a random symmetric matrix
-A = cp.random.random((size, size), dtype=cp.float32)
-A = (A + A.T) / 2  # Make symmetric
-
-# Initial vector
-b = cp.random.random(size, dtype=cp.float32)
-
-for i in range(iterations):
-    b_next = cp.dot(A, b)
-    b = b_next / cp.linalg.norm(b_next)
-
-cp.cuda.Device().synchronize()
-```
-
-```bash
-!nsys profile -o power_iteration python power_iteration.py
-```
-
-```python
-import nsightful
-
-nsightful.display_nsys_sqlite_file_in_notebook('power_iteration.sqlite')
-```
+To collect a timeline from code already loaded in the notebook, use the Nsight Systems kernel and
+`%%nsys` as shown above. Nsightful synchronizes the active CUDA context before stopping capture so
+asynchronous GPU work remains inside the report.
 
 ## Example Output
 
@@ -260,9 +245,9 @@ nsightful.display_nsys_sqlite_file_in_notebook('power_iteration.sqlite')
 
 If you are using a Jupyter environment where you are able to install JupyterLab extensions, check
 out [the Nsight JupyterLab extension](https://pypi.org/project/jupyterlab-nvidia-nsight/).
-However, if you're using an environment like [Google Colab](https://colab.research.google.com/)
-where you can't install extensions, or you prefer a simple graphical summary within notebook cells
-instead of the full GUI experience, Nsightful might be for you.
+Nsightful's custom kernels provide cell profiling without a JupyterLab extension or an explicit
+enable-and-restart cycle. The extension remains useful when you want the full Nsight GUIs embedded
+in JupyterLab.
 
 The Nsight JupyterLab extension allows you to do two things:
 
@@ -274,7 +259,9 @@ The Nsight JupyterLab extension allows you to do two things:
 ## Requirements
 
 - Python 3.10+
-- For Jupyter notebook features: `ipywidgets>=7.0.0`, `IPython>=7.0.0`
+- NVIDIA Nsight Compute 2024.3+ (`ncu`) and/or Nsight Systems 2024.1.1+ (`nsys`) on `PATH` for
+  cell profiling
+- For Jupyter notebook features: install the `notebook` extra
 
 ## Development
 
@@ -290,7 +277,7 @@ python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install in development mode with dev dependencies
-pip install -e ".[dev]"
+pip install -e ".[dev,notebook]"
 
 # Set up pre-commit hooks
 pre-commit install
