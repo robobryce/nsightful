@@ -471,7 +471,10 @@ class TestConversionToJson:
         ]
         mock_conn.execute.return_value = mock_strings
 
-        with patch("nsightful.nsys.parse_nsys_sqlite") as mock_parse:
+        with (
+            patch("nsightful.nsys._sqlite_table_exists", return_value=True),
+            patch("nsightful.nsys.parse_nsys_sqlite") as mock_parse,
+        ):
             mock_events = [
                 {"name": "test_kernel", "pid": "Device 0", "tid": "CUDA API 7", "ts": 1000},
                 {"name": "nvtx_range", "pid": "Host 0", "tid": "NVTX 9999", "ts": 2000},
@@ -489,7 +492,10 @@ class TestConversionToJson:
         mock_conn = Mock()
         mock_conn.execute.return_value = [{"id": 1, "value": "test"}]
 
-        with patch("nsightful.nsys.parse_nsys_sqlite") as mock_parse:
+        with (
+            patch("nsightful.nsys._sqlite_table_exists", return_value=True),
+            patch("nsightful.nsys.parse_nsys_sqlite") as mock_parse,
+        ):
             mock_parse.return_value = []
 
             activities = [NsysActivityType.KERNEL]
@@ -509,6 +515,41 @@ class TestConversionToJson:
             assert call_args[1]["activities"] == activities
             assert call_args[1]["event_prefix"] == event_prefix
             assert call_args[1]["color_scheme"] == color_scheme
+
+    @pytest.mark.parametrize(
+        ("missing_table", "expected_categories"),
+        [
+            ("NVTX_EVENTS", {"cuda", "cuda_api"}),
+            ("CUPTI_ACTIVITY_KIND_RUNTIME", {"cuda", "nvtx"}),
+            ("CUPTI_ACTIVITY_KIND_KERNEL", set()),
+        ],
+    )
+    def test_convert_without_optional_activity_table(
+        self, sample_nsys_sqlite_db, missing_table, expected_categories
+    ):
+        """Profiles still render when optional activity tables are absent."""
+        conn = sqlite3.connect(str(sample_nsys_sqlite_db))
+        conn.row_factory = sqlite3.Row
+        conn.execute(f"DROP TABLE {missing_table}")
+
+        try:
+            result = convert_nsys_sqlite_to_json(conn)
+        finally:
+            conn.close()
+
+        assert {event["cat"] for event in result} == expected_categories
+
+    def test_convert_empty_export(self):
+        """An export with no captured activities produces an empty trace."""
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+
+        try:
+            result = convert_nsys_sqlite_to_json(conn)
+        finally:
+            conn.close()
+
+        assert result == []
 
 
 class TestRealData:

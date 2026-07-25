@@ -19,6 +19,14 @@ class NsysActivityType:
     CUDA_API = "cuda-api"
 
 
+def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    """Return whether an optional Nsight Systems export table is present."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    return row is not None
+
+
 def convert_nsys_time_to_chrome_trace_time(t: int) -> float:
     """Take a timestamp from nsys (ns) and convert it into us (the default for chrome://tracing)."""
     # For strict correctness, divide by 1000, but this reduces accuracy.
@@ -327,19 +335,48 @@ def parse_nsys_sqlite(
             NsysActivityType.NVTX_KERNEL,
             NsysActivityType.CUDA_API,
         ]
-    if NsysActivityType.KERNEL in activities or NsysActivityType.NVTX_KERNEL in activities:
+
+    per_device_kernel_rows: Dict[int, List[sqlite3.Row]] = defaultdict(list)
+    per_device_kernel_events: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    per_device_nvtx_rows: Dict[int, List[sqlite3.Row]] = defaultdict(list)
+    per_device_nvtx_events: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    per_device_cuda_api_rows: Dict[int, List[sqlite3.Row]] = defaultdict(list)
+    per_device_cuda_api_events: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+
+    has_kernel_events = _sqlite_table_exists(conn, "CUPTI_ACTIVITY_KIND_KERNEL")
+    has_nvtx_events = _sqlite_table_exists(conn, "NVTX_EVENTS")
+    has_cuda_api_events = _sqlite_table_exists(conn, "CUPTI_ACTIVITY_KIND_RUNTIME")
+
+    if has_kernel_events and (
+        NsysActivityType.KERNEL in activities or NsysActivityType.NVTX_KERNEL in activities
+    ):
         per_device_kernel_rows, per_device_kernel_events = parse_nsys_sqlite_cupti_kernel_events(
             conn, strings
         )
-    if NsysActivityType.NVTX_CPU in activities or NsysActivityType.NVTX_KERNEL in activities:
+    if (
+        has_kernel_events
+        and has_nvtx_events
+        and (NsysActivityType.NVTX_CPU in activities or NsysActivityType.NVTX_KERNEL in activities)
+    ):
         per_device_nvtx_rows, per_device_nvtx_events = parse_nsys_sqlite_nvtx_events(
             conn, strings, event_prefix=event_prefix, color_scheme=color_scheme
         )
-    if NsysActivityType.CUDA_API in activities or NsysActivityType.NVTX_KERNEL in activities:
+    if (
+        has_kernel_events
+        and has_cuda_api_events
+        and (NsysActivityType.CUDA_API in activities or NsysActivityType.NVTX_KERNEL in activities)
+    ):
         per_device_cuda_api_rows, per_device_cuda_api_events = parse_nsys_sqlite_cuda_api_events(
             conn, strings
         )
-    if NsysActivityType.NVTX_KERNEL in activities:
+    nvtx_kernel_event_map: Dict[sqlite3.Row, Tuple[int, int]] = {}
+    pid_to_device: Dict[int, int] = {}
+    if (
+        NsysActivityType.NVTX_KERNEL in activities
+        and has_kernel_events
+        and has_nvtx_events
+        and has_cuda_api_events
+    ):
         pid_to_device = link_nsys_pid_with_devices(conn)
         nvtx_kernel_event_map = link_nvtx_events_to_kernel_events(
             strings,
@@ -399,8 +436,9 @@ def convert_nsys_sqlite_to_json(
 
     # Extract string mappings from database
     strings: Dict[int, str] = {}
-    for r in conn.execute("SELECT id, value FROM StringIds"):
-        strings[r["id"]] = r["value"]
+    if _sqlite_table_exists(conn, "StringIds"):
+        for r in conn.execute("SELECT id, value FROM StringIds"):
+            strings[r["id"]] = r["value"]
 
     # Parse all events using existing logic
     trace_events = parse_nsys_sqlite(
