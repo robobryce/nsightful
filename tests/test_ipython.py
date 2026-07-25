@@ -275,6 +275,7 @@ def test_validate_profiler_version(monkeypatch, profiler, output, expected):
     ("profiler", "output", "message"),
     [
         ("ncu", "Version 2024.2.0", "ncu 2024.2.0 is too old"),
+        ("nsys", "NVIDIA Nsight Systems version 2024.6.2", "nsys 2024.6.2 is too old"),
         ("nsys", "not a version", "could not determine nsys version"),
     ],
 )

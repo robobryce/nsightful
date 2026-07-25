@@ -259,7 +259,7 @@ The Nsight JupyterLab extension allows you to do two things:
 ## Requirements
 
 - Python 3.10+
-- NVIDIA Nsight Compute 2024.3+ (`ncu`) and/or Nsight Systems 2024.1.1+ (`nsys`) on `PATH` for
+- NVIDIA Nsight Compute 2024.3+ (`ncu`) and/or Nsight Systems 2026.1.1+ (`nsys`) on `PATH` for
   cell profiling
 - For Jupyter notebook features: install the `notebook` extra
 

@@ -21,7 +21,7 @@ NSYS_COMMAND_ENV = "NSIGHTFUL_NSYS_COMMAND"
 NSYS_SESSION_ENV = "NSIGHTFUL_NSYS_SESSION"
 
 _PROFILERS = ("ncu", "nsys")
-_MINIMUM_VERSIONS = {"ncu": (2024, 3, 0), "nsys": (2024, 1, 1)}
+_MINIMUM_VERSIONS = {"ncu": (2024, 3, 0), "nsys": (2026, 1, 1)}
 _NCU_OWNED_OPTIONS = {
     "-c",
     "-f",
