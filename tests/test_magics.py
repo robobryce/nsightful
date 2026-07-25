@@ -195,22 +195,6 @@ class TestProfilerHelpers:
     def test_check_profiler_command_accepts_success(self):
         magics._check_profiler_command(_result(), ["ncu", "--import=report"])
 
-    def test_wait_for_nsys_collection_accepts_ready_marker(self, monkeypatch, tmp_path):
-        marker = tmp_path / "ready"
-        marker.touch()
-        sleep = Mock()
-        monkeypatch.setattr(magics.time, "sleep", sleep)
-
-        magics._wait_for_nsys_collection(marker)
-
-        sleep.assert_not_called()
-
-    def test_wait_for_nsys_collection_times_out(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(magics, "_NSYS_START_TIMEOUT_SECONDS", 0)
-
-        with pytest.raises(UsageError, match="did not start"):
-            magics._wait_for_nsys_collection(tmp_path / "missing")
-
     def test_nsys_collection_is_active(self, monkeypatch):
         run_profiler = Mock(
             return_value=_result(stdout='[{"name":"session-1","state":"Collection"}]')
@@ -464,8 +448,7 @@ class TestNCUMagic:
 class TestNSYSMagic:
     @pytest.fixture(autouse=True)
     def _collection_ready(self, monkeypatch):
-        monkeypatch.setattr(magics, "_wait_for_nsys_collection", Mock())
-        monkeypatch.setattr(magics, "_nsys_supports_ready_callback", Mock(return_value=True))
+        monkeypatch.setattr(magics, "_wait_for_nsys_session_collection", Mock())
 
     @pytest.mark.parametrize("profiler", (None, "ncu"))
     def test_requires_nsys_wrapper(self, monkeypatch, profiler):
@@ -521,11 +504,6 @@ class TestNSYSMagic:
         synchronize.assert_called_once_with()
         assert run_profiler.call_count == 2
         start_command = run_profiler.call_args_list[0].args[0]
-        callback = next(
-            argument
-            for argument in start_command
-            if argument.startswith("--after-collection-start=")
-        )
         assert start_command == [
             "/opt/nsys",
             "start",
@@ -533,7 +511,6 @@ class TestNSYSMagic:
             f"--output={report}",
             "--force-overwrite=true",
             "--export=sqlite",
-            callback,
             "--sample",
             "process-tree",
             "--cpuctxsw=process-tree",
@@ -542,11 +519,10 @@ class TestNSYSMagic:
         display.assert_called_once_with(str(sqlite_report))
         assert f"[nsys] Report: {report}" in capsys.readouterr().out
 
-    def test_profiles_without_callback_when_nsys_does_not_support_it(self, monkeypatch, tmp_path):
+    def test_waits_for_session_collection_before_running_cell(self, monkeypatch, tmp_path):
         monkeypatch.setenv(PROFILER_ENV, "nsys")
         monkeypatch.setenv(NSYS_COMMAND_ENV, "/opt/nsys")
         monkeypatch.setenv(NSYS_SESSION_ENV, "session-42")
-        monkeypatch.setattr(magics, "_nsys_supports_ready_callback", Mock(return_value=False))
         run_profiler = Mock(return_value=_result())
         wait_for_collection = Mock()
         monkeypatch.setattr(magics, "_run_profiler_command", run_profiler)
@@ -557,10 +533,6 @@ class TestNSYSMagic:
             f"-o {tmp_path / 'timeline'} --no-display", "launch_kernel()"
         )
 
-        start_command = run_profiler.call_args_list[0].args[0]
-        assert not any(
-            argument.startswith("--after-collection-start=") for argument in start_command
-        )
         wait_for_collection.assert_called_once_with("/opt/nsys", "session-42")
 
     def test_no_display_does_not_require_sqlite_export(self, monkeypatch, tmp_path):

@@ -8,10 +8,8 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
-from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -208,19 +206,6 @@ def _check_profiler_command(
     raise UsageError(f"{' '.join(command[:2])} failed: {detail}")
 
 
-def _nsys_ready_callback(marker: Path) -> str:
-    """Build a callback that marks when an interactive collection is armed."""
-    script = f"from pathlib import Path; Path({str(marker)!r}).touch()"
-    return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
-
-
-def _nsys_supports_ready_callback(nsys: str) -> bool:
-    """Return whether ``nsys start`` supports the collection-ready callback."""
-    result = _run_profiler_command([nsys, "start", "--help"])
-    output = f"{result.stdout}\n{result.stderr}"
-    return result.returncode == 0 and "--after-collection-start" in output
-
-
 def _nsys_collection_is_active(nsys: str, session: str) -> bool:
     """Return whether Nsight Systems reports an active interactive collection."""
     result = _run_profiler_command([nsys, "sessions", "list", "--output-format=json"])
@@ -239,15 +224,6 @@ def _wait_for_nsys_session_collection(nsys: str, session: str) -> None:
     """Wait until Nsight Systems reports that the session is collecting."""
     deadline = time.monotonic() + _NSYS_START_TIMEOUT_SECONDS
     while not _nsys_collection_is_active(nsys, session):
-        if time.monotonic() >= deadline:
-            raise UsageError("nsys collection did not start before the timeout")
-        time.sleep(0.01)
-
-
-def _wait_for_nsys_collection(marker: Path) -> None:
-    """Wait until Nsight Systems confirms that collection has started."""
-    deadline = time.monotonic() + _NSYS_START_TIMEOUT_SECONDS
-    while not marker.is_file():
         if time.monotonic() >= deadline:
             raise UsageError("nsys collection did not start before the timeout")
         time.sleep(0.01)
@@ -376,71 +352,52 @@ class NSYSMagics(Magics):
             start_defaults.append("--sample=none")
         if "--cpuctxsw" not in start_option_names:
             start_defaults.append("--cpuctxsw=none")
-        supports_ready_callback = _nsys_supports_ready_callback(nsys)
-        ready_context = (
-            tempfile.TemporaryDirectory(prefix="nsightful-nsys-ready-")
-            if supports_ready_callback
-            else nullcontext(None)
-        )
-        with ready_context as ready_dir:
-            ready_marker = Path(ready_dir) / "ready" if ready_dir is not None else None
-            callback_args = (
-                [f"--after-collection-start={_nsys_ready_callback(ready_marker)}"]
-                if ready_marker is not None
-                else []
-            )
-            start_command = [
-                nsys,
-                "start",
-                f"--session={session}",
-                *start_defaults,
-                f"--output={str(report).replace('%', '%%')}",
-                "--force-overwrite=true",
-                "--export=sqlite",
-                *callback_args,
-                *start_args,
-            ]
-            _check_profiler_command(_run_profiler_command(start_command), start_command)
+        start_command = [
+            nsys,
+            "start",
+            f"--session={session}",
+            *start_defaults,
+            f"--output={str(report).replace('%', '%%')}",
+            "--force-overwrite=true",
+            "--export=sqlite",
+            *start_args,
+        ]
+        _check_profiler_command(_run_profiler_command(start_command), start_command)
 
-            result: Any = None
-            cell_error: Optional[BaseException] = None
-            try:
-                if ready_marker is not None:
-                    _wait_for_nsys_collection(ready_marker)
-                else:
-                    _wait_for_nsys_session_collection(nsys, session)
-                result = self.shell.run_cell(cell)
-                if not _cell_succeeded(result):
-                    nested_error = getattr(result, "error_before_exec", None) or getattr(
-                        result, "error_in_exec", None
-                    )
-                    cell_error = (
-                        nested_error
-                        if isinstance(nested_error, BaseException)
-                        else RuntimeError("profiled cell execution failed")
-                    )
-                _synchronize_current_cuda_context()
-            except BaseException as error:
-                cell_error = error
-                raise
-            finally:
-                stop_command = [nsys, "stop", f"--session={session}"]
-                stop_result = _run_profiler_command(stop_command)
-                if stop_result.returncode != 0 and cell_error is not None:
-                    detail = (
-                        stop_result.stderr.strip() or stop_result.stdout.strip() or "unknown error"
-                    )
-                    print(
-                        f"[nsys] Failed to stop profiler after cell error: {detail}",
-                        file=sys.stderr,
-                    )
-                else:
-                    _check_profiler_command(stop_result, stop_command)
-                if "--stats" in start_option_names and stop_result.returncode == 0:
-                    if stop_result.stdout.strip():
-                        print(stop_result.stdout.rstrip())
-                    if stop_result.stderr.strip():
-                        print(stop_result.stderr.rstrip(), file=sys.stderr)
+        result: Any = None
+        cell_error: Optional[BaseException] = None
+        try:
+            _wait_for_nsys_session_collection(nsys, session)
+            result = self.shell.run_cell(cell)
+            if not _cell_succeeded(result):
+                nested_error = getattr(result, "error_before_exec", None) or getattr(
+                    result, "error_in_exec", None
+                )
+                cell_error = (
+                    nested_error
+                    if isinstance(nested_error, BaseException)
+                    else RuntimeError("profiled cell execution failed")
+                )
+            _synchronize_current_cuda_context()
+        except BaseException as error:
+            cell_error = error
+            raise
+        finally:
+            stop_command = [nsys, "stop", f"--session={session}"]
+            stop_result = _run_profiler_command(stop_command)
+            if stop_result.returncode != 0 and cell_error is not None:
+                detail = stop_result.stderr.strip() or stop_result.stdout.strip() or "unknown error"
+                print(
+                    f"[nsys] Failed to stop profiler after cell error: {detail}",
+                    file=sys.stderr,
+                )
+            else:
+                _check_profiler_command(stop_result, stop_command)
+            if "--stats" in start_option_names and stop_result.returncode == 0:
+                if stop_result.stdout.strip():
+                    print(stop_result.stdout.rstrip())
+                if stop_result.stderr.strip():
+                    print(stop_result.stderr.rstrip(), file=sys.stderr)
 
         _propagate_cell_error(result)
         print(f"[nsys] Report: {report}")
