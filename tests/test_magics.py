@@ -85,6 +85,9 @@ class TestParseMagicArguments:
             ("ncu", "-- --set full", "--set"),
             ("nsys", "--trace=cuda,nvtx", "--trace"),
             ("nsys", "-tcuda", "-t"),
+            ("nsys", "--capture-range=nvtx", "--capture-range"),
+            ("nsys", "-ccudaProfilerApi", "-c"),
+            ("nsys", "--after-collection-start=true", "--after-collection-start"),
         ),
     )
     def test_rejects_options_owned_by_magic(self, profiler, argument, option):
@@ -191,6 +194,22 @@ class TestProfilerHelpers:
 
     def test_check_profiler_command_accepts_success(self):
         magics._check_profiler_command(_result(), ["ncu", "--import=report"])
+
+    def test_wait_for_nsys_collection_accepts_ready_marker(self, monkeypatch, tmp_path):
+        marker = tmp_path / "ready"
+        marker.touch()
+        sleep = Mock()
+        monkeypatch.setattr(magics.time, "sleep", sleep)
+
+        magics._wait_for_nsys_collection(marker)
+
+        sleep.assert_not_called()
+
+    def test_wait_for_nsys_collection_times_out(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(magics, "_NSYS_START_TIMEOUT_SECONDS", 0)
+
+        with pytest.raises(UsageError, match="did not start"):
+            magics._wait_for_nsys_collection(tmp_path / "missing")
 
     def test_synchronize_current_cuda_context(self, monkeypatch):
         def get_current(context_pointer):
@@ -420,6 +439,10 @@ class TestNCUMagic:
 
 
 class TestNSYSMagic:
+    @pytest.fixture(autouse=True)
+    def _collection_ready(self, monkeypatch):
+        monkeypatch.setattr(magics, "_wait_for_nsys_collection", Mock())
+
     @pytest.mark.parametrize("profiler", (None, "ncu"))
     def test_requires_nsys_wrapper(self, monkeypatch, profiler):
         if profiler is not None:
@@ -472,22 +495,26 @@ class TestNSYSMagic:
         assert returned is None
         shell.run_cell.assert_called_once_with("launch_kernel()")
         synchronize.assert_called_once_with()
-        assert run_profiler.call_args_list == [
-            call(
-                [
-                    "/opt/nsys",
-                    "start",
-                    "--session=session-42",
-                    f"--output={report}",
-                    "--force-overwrite=true",
-                    "--export=sqlite",
-                    "--sample",
-                    "process-tree",
-                    "--cpuctxsw=process-tree",
-                ]
-            ),
-            call(["/opt/nsys", "stop", "--session=session-42"]),
+        assert run_profiler.call_count == 2
+        start_command = run_profiler.call_args_list[0].args[0]
+        callback = next(
+            argument
+            for argument in start_command
+            if argument.startswith("--after-collection-start=")
+        )
+        assert start_command == [
+            "/opt/nsys",
+            "start",
+            "--session=session-42",
+            f"--output={report}",
+            "--force-overwrite=true",
+            "--export=sqlite",
+            callback,
+            "--sample",
+            "process-tree",
+            "--cpuctxsw=process-tree",
         ]
+        assert run_profiler.call_args_list[1] == call(["/opt/nsys", "stop", "--session=session-42"])
         display.assert_called_once_with(str(sqlite_report))
         assert f"[nsys] Report: {report}" in capsys.readouterr().out
 

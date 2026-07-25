@@ -85,13 +85,16 @@ from pathlib import Path
 import cupy as cp
 
 pid = os.getpid()
+warm = cp.ones(1, dtype=cp.int64)
+warm *= 2
+warm += 1
 x = cp.arange(100_000, dtype=cp.int64)
 cp.cuda.runtime.deviceSynchronize()
 get_ipython().run_cell_magic(
-    "nsys", "-o {report} --no-display", "x *= 2"
+    "nsys", "-o {report} --no-display", "x *= 2\\nx += 1"
 )
 assert os.getpid() == pid
-assert int(x.sum()) == 9_999_900_000
+assert int(x.sum()) == 10_000_000_000
 assert Path({str(report)!r}).is_file()
 assert Path({str(sqlite_report)!r}).is_file()
 print("NSIGHTFUL_NSYS_E2E_OK")
@@ -105,4 +108,4 @@ print("NSIGHTFUL_NSYS_E2E_OK")
         count = connection.execute("SELECT COUNT(*) FROM CUPTI_ACTIVITY_KIND_KERNEL").fetchone()
     finally:
         connection.close()
-    assert count is not None and count[0] >= 1
+    assert count is not None and count[0] >= 2
