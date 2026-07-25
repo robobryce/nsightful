@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -212,6 +213,13 @@ def _nsys_ready_callback(marker: Path) -> str:
     return f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
 
 
+def _nsys_supports_ready_callback(nsys: str) -> bool:
+    """Return whether ``nsys start`` supports the collection-ready callback."""
+    result = _run_profiler_command([nsys, "start", "--help"])
+    output = f"{result.stdout}\n{result.stderr}"
+    return result.returncode == 0 and "--after-collection-start" in output
+
+
 def _wait_for_nsys_collection(marker: Path) -> None:
     """Wait until Nsight Systems confirms that collection has started."""
     deadline = time.monotonic() + _NSYS_START_TIMEOUT_SECONDS
@@ -344,8 +352,19 @@ class NSYSMagics(Magics):
             start_defaults.append("--sample=none")
         if "--cpuctxsw" not in start_option_names:
             start_defaults.append("--cpuctxsw=none")
-        with tempfile.TemporaryDirectory(prefix="nsightful-nsys-ready-") as ready_dir:
-            ready_marker = Path(ready_dir) / "ready"
+        supports_ready_callback = _nsys_supports_ready_callback(nsys)
+        ready_context = (
+            tempfile.TemporaryDirectory(prefix="nsightful-nsys-ready-")
+            if supports_ready_callback
+            else nullcontext(None)
+        )
+        with ready_context as ready_dir:
+            ready_marker = Path(ready_dir) / "ready" if ready_dir is not None else None
+            callback_args = (
+                [f"--after-collection-start={_nsys_ready_callback(ready_marker)}"]
+                if ready_marker is not None
+                else []
+            )
             start_command = [
                 nsys,
                 "start",
@@ -354,7 +373,7 @@ class NSYSMagics(Magics):
                 f"--output={str(report).replace('%', '%%')}",
                 "--force-overwrite=true",
                 "--export=sqlite",
-                f"--after-collection-start={_nsys_ready_callback(ready_marker)}",
+                *callback_args,
                 *start_args,
             ]
             _check_profiler_command(_run_profiler_command(start_command), start_command)
@@ -362,7 +381,8 @@ class NSYSMagics(Magics):
             result: Any = None
             cell_error: Optional[BaseException] = None
             try:
-                _wait_for_nsys_collection(ready_marker)
+                if ready_marker is not None:
+                    _wait_for_nsys_collection(ready_marker)
                 result = self.shell.run_cell(cell)
                 if not _cell_succeeded(result):
                     nested_error = getattr(result, "error_before_exec", None) or getattr(
