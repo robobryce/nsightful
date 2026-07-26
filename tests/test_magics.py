@@ -76,6 +76,27 @@ class TestParseMagicArguments:
         assert report == (tmp_path / "reports/profile.ncu-rep").resolve()
 
     @pytest.mark.parametrize(
+        "arguments",
+        (
+            ["--kernel-name", "regex:(copy_blocked|copy_optimized)"],
+            ["--kernel-name=regex:(copy_blocked|copy_optimized)"],
+            ["-k", "regex:(copy_blocked|copy_optimized)"],
+            ["-kregex:(copy_blocked|copy_optimized)"],
+        ),
+    )
+    def test_accepts_ncu_kernel_filter(self, tmp_path, monkeypatch, arguments):
+        monkeypatch.chdir(tmp_path)
+
+        _, _, profiler_args = magics._parse_magic_arguments(" ".join(arguments), "ncu")
+
+        assert profiler_args == arguments
+
+    @pytest.mark.parametrize("argument", ("--kernel-name", "-k"))
+    def test_ncu_kernel_filter_requires_value(self, argument):
+        with pytest.raises(UsageError, match="requires a value"):
+            magics._split_ncu_report_arguments([argument])
+
+    @pytest.mark.parametrize(
         ("profiler", "argument", "option"),
         (
             ("ncu", "--export=somewhere", "--export"),
@@ -308,7 +329,8 @@ class TestNCUMagic:
         shell = _shell(cell_result)
 
         returned = magics.NCUMagics(shell=shell).ncu(
-            f"-o '{output}' -- --page raw --print-units base", "launch_kernel()"
+            f"-o '{output}' --kernel-name regex:copy -- --page raw --print-units base",
+            "launch_kernel()",
         )
 
         assert returned is None
@@ -326,6 +348,8 @@ class TestNCUMagic:
                     "--nvtx-include=Nsightful@cell-0123456789abcdef",
                     f"--export={report}",
                     "--force-overwrite",
+                    "--kernel-name",
+                    "regex:copy",
                 ]
             ),
             call(

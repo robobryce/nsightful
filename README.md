@@ -57,7 +57,7 @@ x = cp.arange(1_000_000)
 With the Nsight Compute kernel:
 
 ```python
-%%ncu -o multiply.ncu-rep
+%%ncu -o multiply.ncu-rep --kernel-name regex:multiply
 x *= 2
 ```
 
@@ -69,9 +69,9 @@ x *= 2
 ```
 
 Both magics save the native report and display it in the notebook. `%%nsys` also exports the
-corresponding SQLite file. Pass `--no-display` to save without rendering. Arguments after `--` on
-`%%ncu` are passed to the report import command; other arguments on `%%nsys` are passed to
-`nsys start`.
+corresponding SQLite file. Pass `--no-display` to save without rendering. `%%ncu` accepts
+`--kernel-name`/`-k` to filter the cell report; its arguments after `--` are passed to the report
+import command. Other arguments on `%%nsys` are passed to `nsys start`.
 
 Profiler collection options must be chosen when the wrapper starts. They can be stored in a
 custom kernelspec at installation time:

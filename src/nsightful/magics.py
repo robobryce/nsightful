@@ -65,6 +65,7 @@ _NCU_DISPLAY_OPTIONS = {
     "--print-units",
     "--resolve-source-file",
 }
+_NCU_EXPORT_OPTIONS = {"-k", "--kernel-name"}
 _NSYS_OWNED_OPTIONS = {
     "-c",
     "-f",
@@ -83,7 +84,7 @@ _NSYS_START_TIMEOUT_SECONDS = 30.0
 
 
 def _option_name(argument: str) -> str:
-    for short_option in ("-c", "-o", "-s", "-t"):
+    for short_option in ("-c", "-k", "-o", "-s", "-t"):
         if argument.startswith(short_option) and len(argument) > len(short_option):
             return short_option
     return argument.split("=", 1)[0]
@@ -138,13 +139,14 @@ def _parse_magic_arguments(line: str, profiler: str) -> Tuple[Path, bool, List[s
             {
                 _option_name(argument)
                 for argument in profiler_args
-                if argument.startswith("-") and _option_name(argument) not in _NCU_DISPLAY_OPTIONS
+                if argument.startswith("-")
+                and _option_name(argument) not in _NCU_DISPLAY_OPTIONS | _NCU_EXPORT_OPTIONS
             }
         )
         if unsupported:
             raise UsageError(
-                "%%ncu accepts only report display options after --; "
-                f"pass collection options to nsightful-ncu instead: {', '.join(unsupported)}"
+                "%%ncu accepts only kernel filters and report display options; "
+                f"pass other collection options to nsightful-ncu instead: {', '.join(unsupported)}"
             )
     else:
         launch_options = sorted(
@@ -174,6 +176,27 @@ def _parse_magic_arguments(line: str, profiler: str) -> Tuple[Path, bool, List[s
         report = report.with_name(report.name + suffix)
     report.parent.mkdir(parents=True, exist_ok=True)
     return report, display, profiler_args
+
+
+def _split_ncu_report_arguments(arguments: Sequence[str]) -> Tuple[List[str], List[str]]:
+    """Separate cell export filters from report display arguments."""
+    export_args: List[str] = []
+    display_args: List[str] = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        option = _option_name(argument)
+        if option in _NCU_EXPORT_OPTIONS:
+            export_args.append(argument)
+            if argument == option:
+                index += 1
+                if index == len(arguments):
+                    raise UsageError(f"{argument} requires a value")
+                export_args.append(arguments[index])
+        else:
+            display_args.append(argument)
+        index += 1
+    return export_args, display_args
 
 
 def _clean_profiler_environment() -> Dict[str, str]:
@@ -275,6 +298,7 @@ class NCUMagics(Magics):
         if os.environ.get(PROFILER_ENV) != "ncu":
             raise UsageError("%%ncu requires a kernel launched with nsightful-ncu")
         report, display, report_args = _parse_magic_arguments(line, "ncu")
+        export_args, display_args = _split_ncu_report_arguments(report_args)
         ncu = os.environ.get(NCU_COMMAND_ENV)
         base_report = os.environ.get(NCU_REPORT_ENV)
         if not ncu or not base_report:
@@ -310,6 +334,7 @@ class NCUMagics(Magics):
             f"--nvtx-include=Nsightful@{range_name}",
             f"--export={report}",
             "--force-overwrite",
+            *export_args,
         ]
         export_result = _run_profiler_command(export_command)
         export_output = f"{export_result.stdout}\n{export_result.stderr}"
@@ -320,7 +345,7 @@ class NCUMagics(Magics):
         print(f"[ncu] Report: {report}")
 
         if display:
-            csv_command = [ncu, f"--import={report}", "--csv", *report_args]
+            csv_command = [ncu, f"--import={report}", "--csv", *display_args]
             csv_result = _run_profiler_command(csv_command)
             _check_profiler_command(csv_result, csv_command)
             from .notebook import display_ncu_csv_in_notebook
