@@ -12,7 +12,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 from IPython.core.error import UsageError
 from IPython.core.magic import Magics, cell_magic, magics_class
@@ -414,14 +414,28 @@ class NSYSMagics(Magics):
 def load_ipython_extension(ipython: Any) -> None:
     """Register only the magic matching the active profiler wrapper."""
     profiler = os.environ.get(PROFILER_ENV)
+    magic_class: Type[Magics]
     if profiler == "ncu":
         temp_dir = os.environ.get(NCU_TEMP_DIR_ENV)
         if temp_dir:
             atexit.register(_cleanup_ncu_temp_dir, temp_dir)
-        ipython.register_magics(NCUMagics)
+        magic_class = NCUMagics
     elif profiler == "nsys":
-        ipython.register_magics(NSYSMagics)
+        magic_class = NSYSMagics
     else:
         raise RuntimeError(
             "nsightful.magics must be loaded by the nsightful-ncu or nsightful-nsys wrapper"
         )
+
+    ipython.register_magics(magic_class)
+
+    def restore_profiler_magic(*args: Any, **kwargs: Any) -> None:
+        """Keep server-injected extensions from replacing the active profiler magic."""
+        del args, kwargs
+        active_magic = ipython.find_cell_magic(profiler)
+        active_owner = getattr(active_magic, "__self__", None)
+        if not isinstance(active_owner, magic_class):
+            ipython.register_magics(magic_class)
+
+    ipython.events.register("pre_run_cell", restore_profiler_magic)
+    ipython.events.register("post_run_cell", restore_profiler_magic)

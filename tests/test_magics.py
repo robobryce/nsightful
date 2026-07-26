@@ -745,9 +745,45 @@ class TestExtensionRegistration:
     )
     def test_registers_only_active_profiler_magic(self, monkeypatch, profiler, magic_class):
         monkeypatch.setenv(PROFILER_ENV, profiler)
-        ipython = SimpleNamespace(register_magics=Mock())
+        active_magic = getattr(magic_class(shell=_shell()), profiler)
+        ipython = SimpleNamespace(
+            register_magics=Mock(),
+            find_cell_magic=Mock(return_value=active_magic),
+            events=SimpleNamespace(register=Mock()),
+        )
 
         magics.load_ipython_extension(ipython)
+
+        ipython.register_magics.assert_called_once_with(magic_class)
+        assert ipython.events.register.call_count == 2
+        assert [call.args[0] for call in ipython.events.register.call_args_list] == [
+            "pre_run_cell",
+            "post_run_cell",
+        ]
+
+    @pytest.mark.parametrize(
+        ("profiler", "magic_class"), (("ncu", magics.NCUMagics), ("nsys", magics.NSYSMagics))
+    )
+    def test_restores_active_magic_after_an_extension_replaces_it(
+        self, monkeypatch, profiler, magic_class
+    ):
+        monkeypatch.setenv(PROFILER_ENV, profiler)
+        active_magic = SimpleNamespace(__self__=SimpleNamespace())
+        callbacks = {}
+        ipython = SimpleNamespace(
+            register_magics=Mock(),
+            find_cell_magic=Mock(return_value=active_magic),
+            events=SimpleNamespace(
+                register=Mock(
+                    side_effect=lambda event, callback: callbacks.setdefault(event, callback)
+                )
+            ),
+        )
+
+        magics.load_ipython_extension(ipython)
+        ipython.register_magics.reset_mock()
+
+        callbacks["post_run_cell"]()
 
         ipython.register_magics.assert_called_once_with(magic_class)
 
@@ -765,7 +801,12 @@ class TestExtensionRegistration:
         monkeypatch.setenv(NCU_TEMP_DIR_ENV, str(temp_dir))
         register = Mock()
         monkeypatch.setattr(magics.atexit, "register", register)
-        ipython = SimpleNamespace(register_magics=Mock())
+        active_magic = magics.NCUMagics(shell=_shell()).ncu
+        ipython = SimpleNamespace(
+            register_magics=Mock(),
+            find_cell_magic=Mock(return_value=active_magic),
+            events=SimpleNamespace(register=Mock()),
+        )
 
         magics.load_ipython_extension(ipython)
 
